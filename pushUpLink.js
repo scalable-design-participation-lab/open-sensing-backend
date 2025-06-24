@@ -1,21 +1,39 @@
 const functions = require('@google-cloud/functions-framework');
-const moment = require('moment-timezone');
-const { Pool } = require('pg');
+const pg = require("pg");
 
 functions.http('helloHttp', async (req, res) => {
     if (!req.body) {
         return res.status(400).send('No data provided');
     }
 
-    // Configure your PostgreSQL connection
-    const pool = new Pool({
+    const credentials = {
         host: process.env.host,
         database: process.env.database,
-        port:"5432",
-        user:"postgres",
+        port: "5432",
+        user: "postgres",
         password: process.env.password
-    });
+    };
 
+    const pool = new pg.Pool(credentials);
+
+    // Insert statements
+    const insertSen55 = 'INSERT INTO SEN55(ModuleID, Temperature, Relative_Humidity, VOC, NOx, PM1, PM25, PM4, PM10, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)';
+    const insertSoil = 'INSERT INTO Soil(ModuleID, Soil_Moisture, timestamp) VALUES ($1, $2, $3)';
+    const insertCurrent_Sensor = 'INSERT INTO Current_Sensor(ModuleID, Solar_Input_Current, timestamp) VALUES ($1, $2, $3)';
+    const insertMicrocontroller = 'INSERT INTO Microcontroller(ModuleID, Battery_Level, timestamp) VALUES ($1, $2, $3)';
+    const insertGPS = 'INSERT INTO GPS(ModuleID, Lat, Lon, timestamp) VALUES ($1, $2, $3, $4)';
+    const insertBlues = 'INSERT INTO Blues_Notecard(ModuleID, temperature, voltage, timestamp) VALUES ($1, $2, $3, $4)';
+    const insertBME = 'INSERT INTO bme_280(ModuleID, bme_temp, bme_humid, bme_pressure, timestamp) VALUES ($1, $2, $3, $4, $5)';
+    const insertSCD = 'INSERT INTO scd_41(ModuleID, scd_temp, scd_humid, scd_co2, timestamp) VALUES ($1, $2, $3, $4, $5)';
+
+    // Parse ModuleID from req.body.ID
+    let ModuleID = null;
+    if (req.body.ID) {
+        const parts = req.body.ID.split(':');
+        ModuleID = parts[1] !== undefined ? parts[1] : null;
+    }
+
+    // Destructure with null defaults
     const {
         Temperature = null,
         Relative_Humidity = null,
@@ -41,57 +59,47 @@ functions.http('helloHttp', async (req, res) => {
         scd_co2 = null
     } = req.body;
 
-    const str = req.body.ID;
-    const parts = str.split(':');
-    const integerPart = parts[1];
-
-    const ModuleID = integerPart !== undefined ? integerPart : null;
-
-    // Use EST time zone for timestamp if not provided
-    const ts = (timestamp !== undefined && timestamp !== 0)
+    // Use provided timestamp or current time
+    const ts = (timestamp !== null && timestamp !== 0)
         ? new Date(timestamp * 1000)
-        : moment().tz("America/New_York").toDate();
+        : new Date();
 
-    // Prepare insert queries and params
-    const queries = [];
-
-    if (Temperature !== undefined && Temperature !== null) {
-        queries.push(pool.query(insertSen55, [
-            ModuleID, Temperature, Relative_Humidity, VOC, NOx, PM1, PM25, PM4, PM10, ts
-        ]));
-    }
-    if (Soil_Moisture !== undefined && Soil_Moisture !== null) {
-        queries.push(pool.query(insertSoil, [ModuleID, Soil_Moisture, ts]));
-    }
-    if (Solar_Input_Current !== undefined && Solar_Input_Current !== null) {
-        queries.push(pool.query(insertCurrent_Sensor, [ModuleID, Solar_Input_Current, ts]));
-    }
-    if (Battery_Level !== undefined && Battery_Level !== null) {
-        queries.push(pool.query(insertMicrocontroller, [ModuleID, Battery_Level, ts]));
-    }
-    if (Lat !== undefined && Lat !== null) {
-        queries.push(pool.query(insertGPS, [ModuleID, Lat, Lon, ts]));
-    }
-    if (Local_Temp !== undefined && Local_Temp !== null) {
-        queries.push(pool.query(insertBlues, [ModuleID, Local_Temp, Voltage, ts]));
-    }
-    if (bmeTemperature !== undefined && bmeTemperature !== null) {
-        queries.push(pool.query(insertBME, [ModuleID, bmeTemperature, bmeHumidity, bmePressure, ts]));
-    }
-    if (scd_temp !== undefined && scd_temp !== null) {
-        queries.push(pool.query(insertSCD, [ModuleID, scd_temp, scd_humid, scd_co2, ts]));
-    }
-
-    if (queries.length === 0) {
-        return res.status(400).send('No valid sensor data to insert');
+    // Only proceed if ModuleID is present
+    if (!ModuleID) {
+        return res.status(400).send('ModuleID is required');
     }
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        // Only check/insert ModuleID if we have sensor data to insert
         await checkAndInsertModuleId(client, ModuleID);
-        await Promise.all(queries);
+
+        // Insert sensor data if present
+        if (Temperature !== null) {
+            await client.query(insertSen55, [ModuleID, Temperature, Relative_Humidity, VOC, NOx, PM1, PM25, PM4, PM10, ts]);
+        }
+        if (Soil_Moisture !== null) {
+            await client.query(insertSoil, [ModuleID, Soil_Moisture, ts]);
+        }
+        if (Solar_Input_Current !== null) {
+            await client.query(insertCurrent_Sensor, [ModuleID, Solar_Input_Current, ts]);
+        }
+        if (Battery_Level !== null) {
+            await client.query(insertMicrocontroller, [ModuleID, Battery_Level, ts]);
+        }
+        if (Lat !== null) {
+            await client.query(insertGPS, [ModuleID, Lat, Lon, ts]);
+        }
+        if (Local_Temp !== null) {
+            await client.query(insertBlues, [ModuleID, Local_Temp, Voltage, ts]);
+        }
+        if (bmeTemperature !== null) {
+            await client.query(insertBME, [ModuleID, bmeTemperature, bmeHumidity, bmePressure, ts]);
+        }
+        if (scd_temp !== null) {
+            await client.query(insertSCD, [ModuleID, scd_temp, scd_humid, scd_co2, ts]);
+        }
+
         await client.query('COMMIT');
         res.status(200).send('Data inserted successfully');
     } catch (err) {

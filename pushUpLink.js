@@ -72,7 +72,7 @@ functions.http('helloHttp', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        await checkAndInsertModuleId(client, ModuleID, Lat, Lon);
+        await checkAndInsertModuleId(client, ModuleID, Lat, Lon, scd_co2);
 
         // Insert sensor data if present
         if (Temperature !== null) {
@@ -99,7 +99,8 @@ functions.http('helloHttp', async (req, res) => {
         if (scd_temp !== null) {
             await client.query(insertSCD, [ModuleID, scd_temp, scd_humid, scd_co2, ts]);
         }
-        console.log(`Data inserted for ModuleID: ${ModuleID} at ${ts}, ${req.body}`);
+        console.log(`Data inserted for ModuleID: ${ModuleID} at ${ts}`);
+        console.log('body is: ',req.body, 'temperature...', req.body.Temperature)
 
         await client.query('COMMIT');
         res.status(200).send('Data inserted successfully');
@@ -112,8 +113,9 @@ functions.http('helloHttp', async (req, res) => {
     }
 });
 
-// Function to check if ModuleId exists and insert if it doesn't, now also inserts Lat and Lon
-const checkAndInsertModuleId = async (client, moduleId, lat = null, lon = null) => {
+// Function to check if ModuleId exists and insert if it doesn't
+const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
+    // SQL query that checks if the ModuleId exists, and inserts it if it doesn't
     // Try to insert with lat/lon if not exists
     const queryText = `
         INSERT INTO Modules (ModuleId, lat, lon)
@@ -122,9 +124,26 @@ const checkAndInsertModuleId = async (client, moduleId, lat = null, lon = null) 
             SELECT 1 FROM Modules WHERE ModuleId = $1
         );
     `;
+    // Execute the query
     const res = await client.query(queryText, [moduleId, lat, lon]);
     if (res.rowCount > 0) {
-        console.log(`ModuleId ${moduleId} inserted with Lat=${lat}, Lon=${lon}.`);
+        console.log(`ModuleId ${moduleId} inserted.`);
+
+        // Determine sensors array based on scd_co2
+        let sensors;
+        if (scd_co2 !== null) {
+            sensors = ['sen55', 'scd_41'];
+        } else {
+            sensors = ['sen55', 'bme_280'];
+        }
+
+
+        // Insert into modulesensors
+        await client.query(
+            'INSERT INTO modulesensors (moduleid, sensors) VALUES ($1, $2);',
+            [moduleId, sensors]
+        );
+        console.log(`Inserted into modulesensors: moduleid=${moduleId}, inserted with Lat=${lat}, Lon=${lon}, sensors=${JSON.stringify(sensors)}`);
     } else {
         console.log(`ModuleId ${moduleId} already exists.`);
     }

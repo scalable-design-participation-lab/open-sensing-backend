@@ -60,7 +60,7 @@ functions.http('helloHttp', async (req, res) => {
     } = req.body;
 
     // Use provided timestamp or current time
-    const ts = (timestamp !== null && timestamp !== 0)
+    const ts = (timestamp !== null || timestamp !== 0)
         ? new Date(timestamp * 1000)
         : new Date();
 
@@ -99,6 +99,7 @@ functions.http('helloHttp', async (req, res) => {
         if (scd_temp !== null) {
             await client.query(insertSCD, [ModuleID, scd_temp, scd_humid, scd_co2, ts]);
         }
+        console.log(`Data inserted for ModuleID: ${ModuleID} at ${ts}, ${req.body}`);
 
         await client.query('COMMIT');
         res.status(200).send('Data inserted successfully');

@@ -72,7 +72,7 @@ functions.http('helloHttp', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        await checkAndInsertModuleId(client, ModuleID);
+        await checkAndInsertModuleId(client, ModuleID, Lat, Lon);
 
         // Insert sensor data if present
         if (Temperature !== null) {
@@ -111,14 +111,20 @@ functions.http('helloHttp', async (req, res) => {
     }
 });
 
-// Function to check if ModuleId exists and insert if it doesn't
-const checkAndInsertModuleId = async (client, moduleId) => {
+// Function to check if ModuleId exists and insert if it doesn't, now also inserts Lat and Lon
+const checkAndInsertModuleId = async (client, moduleId, lat = null, lon = null) => {
+    // Try to insert with lat/lon if not exists
     const queryText = `
-        INSERT INTO Modules (ModuleId)
-        SELECT $1
+        INSERT INTO Modules (ModuleId, lat, lon)
+        SELECT $1, $2, $3
         WHERE NOT EXISTS (
             SELECT 1 FROM Modules WHERE ModuleId = $1
         );
     `;
-    await client.query(queryText, [moduleId]);
+    const res = await client.query(queryText, [moduleId, lat, lon]);
+    if (res.rowCount > 0) {
+        console.log(`ModuleId ${moduleId} inserted with Lat=${lat}, Lon=${lon}.`);
+    } else {
+        console.log(`ModuleId ${moduleId} already exists.`);
+    }
 };

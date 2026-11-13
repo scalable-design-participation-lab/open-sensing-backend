@@ -23,6 +23,35 @@ pool.on('error', (err) => {
     console.error('Unexpected error on idle Postgres client', err);
 });
 
+// How far a module must move, in metres, before its stored location is
+// rewritten. GPS noise on a stationary module is routinely a few tens of
+// metres, so the default sits well above that: without a floor the row would
+// be rewritten on jitter every time a module reports.
+const LOCATION_UPDATE_THRESHOLD_M =
+    Number(process.env.location_update_threshold_m) > 0
+        ? Number(process.env.location_update_threshold_m)
+        : 100;
+
+// Great-circle distance in metres between two points (haversine).
+const distanceMetres = (lat1, lon1, lat2, lon2) => {
+    const R = 6371008.8; // IUGG mean Earth radius
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+};
+
+// null/undefined are rejected before the numeric check because Number(null)
+// is 0, which is finite and would read as a coordinate on the equator.
+const asCoordinate = (value, limit) => {
+    if (value === null || value === undefined || value === '') return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || Math.abs(n) > limit) return null;
+    return n;
+};
+
 functions.http('helloHttp', async (req, res) => {
     if (!req.body) {
         return res.status(400).send('No data provided');
@@ -90,7 +119,7 @@ functions.http('helloHttp', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        await checkAndInsertModuleId(client, ModuleID, Lat, Lon, scd_co2);
+        await checkAndInsertModuleId(client, ModuleID, Lat, Lon, scd_co2, ts);
 
         // Insert sensor data if present
         if (Temperature !== null) {
@@ -143,20 +172,25 @@ functions.http('helloHttp', async (req, res) => {
 });
 
 // Function to check if ModuleId exists and insert if it doesn't
-const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
+const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2, ts) => {
     // Insert the module the first time it is seen. ON CONFLICT rather than
     // WHERE NOT EXISTS because the latter is not atomic: two uplinks from the
     // same new module can both pass the existence check, and the loser then
     // violates the ModuleId primary key, aborting the whole transaction and
     // losing that reading. rowCount is still 1 on insert and 0 on conflict,
     // so the caller below is unchanged.
+    // Modules.timestamp records when the stored location was last
+    // established, so it is only set when this uplink actually carried a fix.
+    // A module registered without one keeps a NULL timestamp until its first
+    // real position arrives, which the update path below then stamps.
+    const hasFix = asCoordinate(lat, 90) !== null && asCoordinate(lon, 180) !== null;
     const queryText = `
-        INSERT INTO Modules (ModuleId, lat, lon)
-        VALUES ($1, $2, $3)
+        INSERT INTO Modules (ModuleId, lat, lon, timestamp)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (ModuleId) DO NOTHING;
     `;
     // Execute the query
-    const res = await client.query(queryText, [moduleId, lat, lon]);
+    const res = await client.query(queryText, [moduleId, lat, lon, hasFix ? ts : null]);
     if (res.rowCount > 0) {
         console.log(`ModuleId ${moduleId} inserted.`);
 
@@ -177,5 +211,55 @@ const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
         console.log(`Inserted into modulesensors: moduleid=${moduleId}, inserted with Lat=${lat}, Lon=${lon}, sensors=${JSON.stringify(sensors)}`);
     } else {
         console.log(`ModuleId ${moduleId} already exists.`);
+        await updateModuleLocation(client, moduleId, lat, lon, ts);
     }
 };
+
+// Keep Modules.lat/lon pointing at where the module actually is. The GPS table
+// already keeps every reported fix; this is the current canonical position, and
+// before this it was written once at first sighting and never revisited, so a
+// relocated module kept reporting under its original coordinates forever.
+const updateModuleLocation = async (client, moduleId, lat, lon, ts) => {
+    const newLat = asCoordinate(lat, 90);
+    const newLon = asCoordinate(lon, 180);
+    if (newLat === null || newLon === null) {
+        return; // this uplink carried no usable fix
+    }
+
+    const { rows } = await client.query(
+        'SELECT lat, lon FROM Modules WHERE ModuleId = $1',
+        [moduleId]
+    );
+    if (rows.length === 0) {
+        return;
+    }
+
+    const storedLat = asCoordinate(rows[0].lat, 90);
+    const storedLon = asCoordinate(rows[0].lon, 180);
+
+    let reason;
+    if (storedLat === null || storedLon === null) {
+        // Registered before it had a fix, or stored garbage. Fill it in.
+        reason = 'no location on record';
+    } else {
+        const moved = distanceMetres(storedLat, storedLon, newLat, newLon);
+        if (moved < LOCATION_UPDATE_THRESHOLD_M) {
+            return; // within noise, leave the row alone
+        }
+        reason = `moved ${Math.round(moved)}m`;
+    }
+
+    // timestamp travels with lat/lon so the column always means "when the
+    // stored location was last set" rather than drifting out of step with it.
+    await client.query(
+        'UPDATE Modules SET lat = $2, lon = $3, timestamp = $4 WHERE ModuleId = $1',
+        [moduleId, newLat, newLon, ts]
+    );
+    console.log(
+        `ModuleId ${moduleId} location updated (${reason}): ${newLat}, ${newLon} at ${ts}`
+    );
+};
+
+// Exported for tests; the deployed function is reached through the registration
+// above, not through these.
+module.exports = { distanceMetres, asCoordinate, LOCATION_UPDATE_THRESHOLD_M };

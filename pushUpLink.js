@@ -145,14 +145,16 @@ functions.http('helloHttp', async (req, res) => {
 
 // Function to check if ModuleId exists and insert if it doesn't
 const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
-    // SQL query that checks if the ModuleId exists, and inserts it if it doesn't
-    // Try to insert with lat/lon if not exists
+    // Insert the module the first time it is seen. ON CONFLICT rather than
+    // WHERE NOT EXISTS because the latter is not atomic: two uplinks from the
+    // same new module can both pass the existence check, and the loser then
+    // violates the ModuleId primary key, aborting the whole transaction and
+    // losing that reading. rowCount is still 1 on insert and 0 on conflict,
+    // so the caller below is unchanged.
     const queryText = `
         INSERT INTO Modules (ModuleId, lat, lon)
-        SELECT $1, $2, $3
-        WHERE NOT EXISTS (
-            SELECT 1 FROM Modules WHERE ModuleId = $1
-        );
+        VALUES ($1, $2, $3)
+        ON CONFLICT (ModuleId) DO NOTHING;
     `;
     // Execute the query
     const res = await client.query(queryText, [moduleId, lat, lon]);

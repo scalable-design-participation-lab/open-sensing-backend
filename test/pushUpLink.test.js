@@ -10,7 +10,7 @@ const APP = require.resolve('../pushUpLink.js');
 function loadApp(options = {}) {
     const state = {
         poolsConstructed: 0, connects: 0, releases: 0,
-        releaseArgs: [], queries: [], errorListener: null,
+        releaseArgs: [], queries: [], rawQueries: [], errorListener: null,
     };
 
     class FakePool {
@@ -27,6 +27,7 @@ function loadApp(options = {}) {
                 query: async (text) => {
                     const verb = String(text).trim().split(/\s+/)[0].toUpperCase();
                     state.queries.push(verb);
+                    state.rawQueries.push(String(text));
                     if (verb === "ROLLBACK" && options.failRollback) {
                         throw new Error("injected ROLLBACK failure");
                     }
@@ -104,6 +105,17 @@ describe('pushUpLink connection handling', () => {
         assert.strictEqual(state.queries[0], 'BEGIN');
         assert.strictEqual(state.queries.at(-1), 'COMMIT');
         assert.strictEqual(res.statusCode, 200);
+    });
+
+    it('inserts a new module atomically rather than checking then inserting', async () => {
+        const { handler, state } = loadApp();
+        await handler({ body: uplink() }, fakeRes());
+
+        const moduleInsert = state.rawQueries.find((q) => /INSERT INTO Modules/i.test(q));
+        assert.ok(moduleInsert, 'the module insert should still run');
+        assert.match(moduleInsert, /ON CONFLICT\s*\(\s*ModuleId\s*\)\s*DO NOTHING/i);
+        assert.doesNotMatch(moduleInsert, /WHERE NOT EXISTS/i,
+            'check-then-insert races a concurrent uplink from the same new module');
     });
 
     it('rejects an uplink with no ModuleID without taking a client', async () => {

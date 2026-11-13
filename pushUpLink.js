@@ -118,7 +118,6 @@ functions.http('helloHttp', async (req, res) => {
             await client.query(insertSCD, [ModuleID, scd_temp, scd_humid, scd_co2, ts]);
         }
         console.log(`Data inserted for ModuleID: ${ModuleID} at ${ts}`);
-        console.log('body is: ',req.body, 'temperature...', req.body.Temperature)
 
         await client.query('COMMIT');
         res.status(200).send('Data inserted successfully');

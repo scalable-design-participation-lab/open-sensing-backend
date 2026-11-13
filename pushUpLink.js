@@ -110,7 +110,13 @@ functions.http('helloHttp', async (req, res) => {
 
         // The payload sends lowercase `voltage`. `Voltage` above is the key an
         // older firmware sends, and is kept as a fallback below.
-        voltage = null
+        voltage = null,
+
+        // Blues routing times. Read but not written to any table — kept here
+        // so the handler's view of the payload stays complete, and so storing
+        // them later is a one-line change rather than a rediscovery.
+        inboundTime = null,
+        outboundTime = null
     } = req.body;
 
     // Use the provided unix timestamp (seconds) when it is usable,

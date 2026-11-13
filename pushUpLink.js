@@ -59,9 +59,11 @@ functions.http('helloHttp', async (req, res) => {
         scd_co2 = null
     } = req.body;
 
-    // Use provided timestamp or current time
-    const ts = (timestamp !== null || timestamp !== 0)
-        ? new Date(timestamp * 1000)
+    // Use the provided unix timestamp (seconds) when it is usable,
+    // otherwise fall back to the time the uplink was received.
+    const providedTs = Number(timestamp);
+    const ts = (Number.isFinite(providedTs) && providedTs !== 0)
+        ? new Date(providedTs * 1000)
         : new Date();
 
     // Only proceed if ModuleID is present

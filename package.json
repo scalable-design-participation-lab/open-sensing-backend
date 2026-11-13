@@ -28,8 +28,8 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
-    "c8": "^8.0.0",
-    "mocha": "^10.0.0",
-    "supertest": "^6.0.0"
+    "c8": "^11.0.0",
+    "mocha": "^11.8.0",
+    "supertest": "^7.3.2"
   }
 }

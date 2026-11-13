@@ -1,20 +1,32 @@
 const functions = require('@google-cloud/functions-framework');
 const pg = require("pg");
 
+const credentials = {
+    host: process.env.host,
+    database: process.env.database,
+    port: "5432",
+    user: "postgres",
+    password: process.env.password
+};
+
+// One pool per function instance, reused across invocations. Building a pool
+// inside the handler meant it was never ended, so every uplink left a
+// connection idle for pg's idleTimeoutMillis (30s) and the number of open
+// connections tracked the uplink rate rather than the instance count.
+const pool = new pg.Pool(credentials);
+
+// An idle client that fails emits 'error' on the pool, not on a query. On a
+// pool that outlives the request there is no surrounding try/catch to reach,
+// so without this listener it would be an unhandled error event and would
+// terminate the instance.
+pool.on('error', (err) => {
+    console.error('Unexpected error on idle Postgres client', err);
+});
+
 functions.http('helloHttp', async (req, res) => {
     if (!req.body) {
         return res.status(400).send('No data provided');
     }
-
-    const credentials = {
-        host: process.env.host,
-        database: process.env.database,
-        port: "5432",
-        user: "postgres",
-        password: process.env.password
-    };
-
-    const pool = new pg.Pool(credentials);
 
     // Insert statements
     const insertSen55 = 'INSERT INTO SEN55(ModuleID, Temperature, Relative_Humidity, VOC, NOx, PM1, PM25, PM4, PM10, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)';

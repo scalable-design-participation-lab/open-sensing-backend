@@ -119,7 +119,7 @@ functions.http('helloHttp', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        await checkAndInsertModuleId(client, ModuleID, Lat, Lon, scd_co2);
+        await checkAndInsertModuleId(client, ModuleID, Lat, Lon, scd_co2, ts);
 
         // Insert sensor data if present
         if (Temperature !== null) {
@@ -172,20 +172,25 @@ functions.http('helloHttp', async (req, res) => {
 });
 
 // Function to check if ModuleId exists and insert if it doesn't
-const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
+const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2, ts) => {
     // Insert the module the first time it is seen. ON CONFLICT rather than
     // WHERE NOT EXISTS because the latter is not atomic: two uplinks from the
     // same new module can both pass the existence check, and the loser then
     // violates the ModuleId primary key, aborting the whole transaction and
     // losing that reading. rowCount is still 1 on insert and 0 on conflict,
     // so the caller below is unchanged.
+    // Modules.timestamp records when the stored location was last
+    // established, so it is only set when this uplink actually carried a fix.
+    // A module registered without one keeps a NULL timestamp until its first
+    // real position arrives, which the update path below then stamps.
+    const hasFix = asCoordinate(lat, 90) !== null && asCoordinate(lon, 180) !== null;
     const queryText = `
-        INSERT INTO Modules (ModuleId, lat, lon)
-        VALUES ($1, $2, $3)
+        INSERT INTO Modules (ModuleId, lat, lon, timestamp)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (ModuleId) DO NOTHING;
     `;
     // Execute the query
-    const res = await client.query(queryText, [moduleId, lat, lon]);
+    const res = await client.query(queryText, [moduleId, lat, lon, hasFix ? ts : null]);
     if (res.rowCount > 0) {
         console.log(`ModuleId ${moduleId} inserted.`);
 
@@ -206,7 +211,7 @@ const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
         console.log(`Inserted into modulesensors: moduleid=${moduleId}, inserted with Lat=${lat}, Lon=${lon}, sensors=${JSON.stringify(sensors)}`);
     } else {
         console.log(`ModuleId ${moduleId} already exists.`);
-        await updateModuleLocation(client, moduleId, lat, lon);
+        await updateModuleLocation(client, moduleId, lat, lon, ts);
     }
 };
 
@@ -214,7 +219,7 @@ const checkAndInsertModuleId = async (client, moduleId, lat, lon, scd_co2) => {
 // already keeps every reported fix; this is the current canonical position, and
 // before this it was written once at first sighting and never revisited, so a
 // relocated module kept reporting under its original coordinates forever.
-const updateModuleLocation = async (client, moduleId, lat, lon) => {
+const updateModuleLocation = async (client, moduleId, lat, lon, ts) => {
     const newLat = asCoordinate(lat, 90);
     const newLon = asCoordinate(lon, 180);
     if (newLat === null || newLon === null) {
@@ -244,12 +249,14 @@ const updateModuleLocation = async (client, moduleId, lat, lon) => {
         reason = `moved ${Math.round(moved)}m`;
     }
 
+    // timestamp travels with lat/lon so the column always means "when the
+    // stored location was last set" rather than drifting out of step with it.
     await client.query(
-        'UPDATE Modules SET lat = $2, lon = $3 WHERE ModuleId = $1',
-        [moduleId, newLat, newLon]
+        'UPDATE Modules SET lat = $2, lon = $3, timestamp = $4 WHERE ModuleId = $1',
+        [moduleId, newLat, newLon, ts]
     );
     console.log(
-        `ModuleId ${moduleId} location updated (${reason}): ${newLat}, ${newLon}`
+        `ModuleId ${moduleId} location updated (${reason}): ${newLat}, ${newLon} at ${ts}`
     );
 };
 

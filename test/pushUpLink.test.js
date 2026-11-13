@@ -166,8 +166,12 @@ describe('pushUpLink connection handling', () => {
         });
     });
     describe("module location updates", () => {
+        // uplink() reports timestamp 1762900000 (unix seconds)
+        const UPLINK_TS = new Date(1762900000 * 1000);
         const findUpdate = (state) =>
             state.rawQueries.findIndex((q) => /UPDATE Modules SET lat/i.test(q));
+        const findModuleInsert = (state) =>
+            state.rawQueries.findIndex((q) => /INSERT INTO Modules/i.test(q));
 
         it("fills in a location when the module has none on record", async () => {
             const { handler, state } = loadApp({ moduleExists: true, storedLocation: { lat: null, lon: null } });
@@ -175,7 +179,8 @@ describe('pushUpLink connection handling', () => {
 
             const i = findUpdate(state);
             assert.notStrictEqual(i, -1, "an UPDATE should have been issued");
-            assert.deepStrictEqual(state.params[i], ["864622040846236", 42.3398, -71.0892]);
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", 42.3398, -71.0892, UPLINK_TS]);
         });
 
         it("leaves the row alone when the module has barely moved", async () => {
@@ -193,7 +198,8 @@ describe('pushUpLink connection handling', () => {
 
             const i = findUpdate(state);
             assert.notStrictEqual(i, -1, "a real relocation should update the row");
-            assert.deepStrictEqual(state.params[i], ["864622040846236", 42.3498, -71.0892]);
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", 42.3498, -71.0892, UPLINK_TS]);
         });
 
         it("does not touch the row when the uplink carries no fix", async () => {
@@ -203,6 +209,24 @@ describe('pushUpLink connection handling', () => {
             assert.strictEqual(findUpdate(state), -1);
             assert.ok(!state.rawQueries.some((q) => /SELECT\s+lat,\s*lon/i.test(q)),
                 "should not even read the stored location");
+        });
+
+        it("stamps Modules.timestamp when a new module arrives with a fix", async () => {
+            const { handler, state } = loadApp({ moduleExists: false });
+            await handler({ body: uplink({ Lat: 42.3398, Lon: -71.0892 }) }, fakeRes());
+
+            const i = findModuleInsert(state);
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", 42.3398, -71.0892, UPLINK_TS]);
+        });
+
+        it("leaves Modules.timestamp null when a new module has no fix", async () => {
+            const { handler, state } = loadApp({ moduleExists: false });
+            await handler({ body: uplink() }, fakeRes());
+
+            const i = findModuleInsert(state);
+            assert.strictEqual(state.params[i][3], null,
+                "nothing has moved yet, so there is no move time to record");
         });
 
         it("does not update on the insert path, where lat/lon are already set", async () => {
@@ -226,6 +250,32 @@ describe('pushUpLink connection handling', () => {
             near(distanceMetres(0, 0, 1, 0), 111195, 300);   // 1 deg latitude
             near(distanceMetres(60, 0, 60, 1), 55597, 300);  // 1 deg longitude at 60N
             near(distanceMetres(42.34, -71.09, 42.34, -71.09), 0, 0.001);
+        });
+
+        it("reads the same metres at every deployment latitude", () => {
+            // Modules are deployed from Boston down to Mexico City. A degree of
+            // longitude shrinks with latitude, so a threshold expressed in
+            // degrees would mean a different real distance in each city. These
+            // assert that a true 100 m displacement measures 100 m everywhere.
+            const R = 6371008.8;
+            const toRad = (d) => (d * Math.PI) / 180;
+            const cities = [
+                ["Boston, MA", 42.3601, -71.0589],
+                ["Oakland, CA", 37.8044, -122.2712],
+                ["Monterrey, MX", 25.6866, -100.3161],
+                ["Mexico City, MX", 19.4326, -99.1332],
+            ];
+
+            for (const [name, lat, lon] of cities) {
+                const dLat = ((100 / R) * 180) / Math.PI;
+                const dLon = ((100 / (R * Math.cos(toRad(lat)))) * 180) / Math.PI;
+
+                const north = distanceMetres(lat, lon, lat + dLat, lon);
+                const east = distanceMetres(lat, lon, lat, lon + dLon);
+
+                assert.ok(Math.abs(north - 100) < 0.1, name + " north: " + north);
+                assert.ok(Math.abs(east - 100) < 0.1, name + " east: " + east);
+            }
         });
 
         it("rejects null but accepts a genuine zero", () => {

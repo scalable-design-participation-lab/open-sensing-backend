@@ -108,14 +108,9 @@ functions.http('helloHttp', async (req, res) => {
         fuelgage_voltage = null,
         fuelgage_percent = null,
 
-        // The payload sends lowercase `voltage`. `Voltage` above is a
-        // different key that this payload never sets, so insertBlues has been
-        // binding undefined -> null for it.
-        voltage = null,
-
-        // Blues routing times, in case they are wanted for latency tracking.
-        inboundTime = null,
-        outboundTime = null
+        // The payload sends lowercase `voltage`. `Voltage` above is the key an
+        // older firmware sends, and is kept as a fallback below.
+        voltage = null
     } = req.body;
 
     // Use the provided unix timestamp (seconds) when it is usable,
@@ -155,8 +150,10 @@ functions.http('helloHttp', async (req, res) => {
         if (Lat !== null) {
             await client.query(insertGPS, [ModuleID, Lat, Lon, ts]);
         }
-        if (Local_Temp !== null) {
-            await client.query(insertBlues, [ModuleID, Local_Temp, Voltage, ts]);
+        // Either field alone is worth a row. Gating on Local_Temp alone meant
+        // firmware that reports voltage without it never reached this table.
+        if (Local_Temp !== null || voltage !== null) {
+            await client.query(insertBlues, [ModuleID, Local_Temp, voltage ?? Voltage, ts]);
         }
         if (bmeTemperature !== null) {
             await client.query(insertBME, [ModuleID, bmeTemperature, bmeHumidity, bmePressure, ts]);
@@ -164,6 +161,11 @@ functions.http('helloHttp', async (req, res) => {
         if (scd_temp !== null) {
             await client.query(insertSCD, [ModuleID, scd_temp, scd_humid, scd_co2, ts]);
         }
+        await insertFuelGaugeReading(client, ModuleID, {
+            temp: fuelgage_temp,
+            voltage: fuelgage_voltage,
+            percent: fuelgage_percent,
+        }, ts);
         console.log(`Data inserted for ModuleID: ${ModuleID} at ${ts}`);
 
         await client.query('COMMIT');
@@ -278,6 +280,30 @@ const updateModuleLocation = async (client, moduleId, lat, lon, ts) => {
     );
 };
 
+const INSERT_FUELGAGE =
+    'INSERT INTO fuelgage(ModuleID, fuelgage_temp, fuelgage_voltage, fuelgage_percent, timestamp) '
+    + 'VALUES ($1, $2, $3, $4, $5)';
+
+// Write a fuel gauge reading, when this uplink carried one. The table is
+// created by migrations/002_create_fuelgage.sql.
+//
+// The three readings are independent — a gauge can report state of charge
+// without temperature — so the row goes in whenever any of them is present,
+// with the absent ones as NULL. Gating on a single field, as the sensor
+// inserts above do, would drop the other two whenever that one was missing.
+const insertFuelGaugeReading = async (client, moduleId, reading, ts) => {
+    const { temp, voltage, percent } = reading;
+    if (temp === null && voltage === null && percent === null) {
+        return;
+    }
+    await client.query(INSERT_FUELGAGE, [moduleId, temp, voltage, percent, ts]);
+};
+
 // Exported for tests; the deployed function is reached through the registration
 // above, not through these.
-module.exports = { distanceMetres, asCoordinate, LOCATION_UPDATE_THRESHOLD_M };
+module.exports = {
+    distanceMetres,
+    asCoordinate,
+    insertFuelGaugeReading,
+    LOCATION_UPDATE_THRESHOLD_M,
+};

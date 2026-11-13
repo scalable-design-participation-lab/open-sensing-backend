@@ -238,6 +238,78 @@ describe('pushUpLink connection handling', () => {
         });
     });
 
+    describe("fuel gauge and notecard", () => {
+        const UPLINK_TS = new Date(1762900000 * 1000);
+        const find = (state, table) =>
+            state.rawQueries.findIndex((q) =>
+                new RegExp("INSERT INTO " + table + "\\b", "i").test(q));
+
+        it("writes a fuel gauge reading to its own table", async () => {
+            const { handler, state } = loadApp();
+            await handler({ body: uplink({
+                fuelgage_temp: 24.5, fuelgage_voltage: 3.92, fuelgage_percent: 87,
+            }) }, fakeRes());
+
+            const i = find(state, "fuelgage");
+            assert.notStrictEqual(i, -1, "fuelgage row should be written");
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", 24.5, 3.92, 87, UPLINK_TS]);
+        });
+
+        it("writes the reading even when only one of the three is present", async () => {
+            const { handler, state } = loadApp();
+            await handler({ body: uplink({ fuelgage_percent: 87 }) }, fakeRes());
+
+            const i = find(state, "fuelgage");
+            assert.notStrictEqual(i, -1, "a partial reading is still a reading");
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", null, null, 87, UPLINK_TS]);
+        });
+
+        it("writes nothing when the uplink carries no fuel gauge data", async () => {
+            const { handler, state } = loadApp();
+            await handler({ body: uplink() }, fakeRes());
+
+            assert.strictEqual(find(state, "fuelgage"), -1);
+        });
+
+        it("reaches Blues_Notecard on voltage alone", async () => {
+            const { handler, state } = loadApp();
+            // this firmware sends lowercase voltage and no Local_Temp
+            await handler({ body: uplink({ voltage: 4.01 }) }, fakeRes());
+
+            const i = find(state, "Blues_Notecard");
+            assert.notStrictEqual(i, -1, "voltage alone should reach the table");
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", null, 4.01, UPLINK_TS]);
+        });
+
+        it("still honours the older Local_Temp/Voltage firmware", async () => {
+            const { handler, state } = loadApp();
+            await handler({ body: uplink({ Local_Temp: 19.2, Voltage: 3.7 }) }, fakeRes());
+
+            const i = find(state, "Blues_Notecard");
+            assert.notStrictEqual(i, -1);
+            assert.deepStrictEqual(state.params[i],
+                ["864622040846236", 19.2, 3.7, UPLINK_TS]);
+        });
+
+        it("prefers the lowercase voltage when both keys arrive", async () => {
+            const { handler, state } = loadApp();
+            await handler({ body: uplink({ Local_Temp: 19.2, Voltage: 3.7, voltage: 4.01 }) }, fakeRes());
+
+            const i = find(state, "Blues_Notecard");
+            assert.strictEqual(state.params[i][2], 4.01);
+        });
+
+        it("leaves Blues_Notecard alone when neither field arrives", async () => {
+            const { handler, state } = loadApp();
+            await handler({ body: uplink() }, fakeRes());
+
+            assert.strictEqual(find(state, "Blues_Notecard"), -1);
+        });
+    });
+
     describe("distance and coordinate helpers", () => {
         const { distanceMetres, asCoordinate } = require("../pushUpLink.js");
 

@@ -7,8 +7,11 @@ const APP = require.resolve('../pushUpLink.js');
 // Load pushUpLink.js against stubbed pg / functions-framework so the handler
 // can be driven without a Postgres instance. Returns the registered handler
 // plus the counters the stubs record.
-function loadApp() {
-    const state = { poolsConstructed: 0, connects: 0, releases: 0, queries: [], errorListener: null };
+function loadApp(options = {}) {
+    const state = {
+        poolsConstructed: 0, connects: 0, releases: 0,
+        releaseArgs: [], queries: [], errorListener: null,
+    };
 
     class FakePool {
         constructor(config) {
@@ -22,10 +25,17 @@ function loadApp() {
             state.connects++;
             return {
                 query: async (text) => {
-                    state.queries.push(String(text).trim().split(/\s+/)[0].toUpperCase());
-                    return { rowCount: 1, rows: [] };
+                    const verb = String(text).trim().split(/\s+/)[0].toUpperCase();
+                    state.queries.push(verb);
+                    if (verb === "ROLLBACK" && options.failRollback) {
+                        throw new Error("injected ROLLBACK failure");
+                    }
+                    if (verb === options.failOn) {
+                        throw new Error("injected failure on " + verb);
+                    }
+                    return { rowCount: options.rowCount ?? 1, rows: [] };
                 },
-                release: () => { state.releases++; },
+                release: (arg) => { state.releases++; state.releaseArgs.push(arg); },
             };
         }
     }
@@ -103,5 +113,35 @@ describe('pushUpLink connection handling', () => {
 
         assert.strictEqual(res.statusCode, 400);
         assert.strictEqual(state.connects, 0, 'must not reach the pool');
+    });
+    describe("when the transaction fails", () => {
+        it("still answers 500 even if the ROLLBACK also fails", async () => {
+            const { handler } = loadApp({ failOn: "INSERT", failRollback: true });
+            const res = fakeRes();
+
+            await handler({ body: uplink() }, res);
+
+            assert.strictEqual(res.statusCode, 500);
+            assert.strictEqual(res.body, "Database error");
+        });
+
+        it("discards the client when the ROLLBACK fails", async () => {
+            const { handler, state } = loadApp({ failOn: "INSERT", failRollback: true });
+            await handler({ body: uplink() }, fakeRes());
+
+            assert.strictEqual(state.releases, 1);
+            assert.ok(state.releaseArgs[0], "release() must get a truthy arg so pg drops the client");
+        });
+
+        it("returns the client to the pool when the ROLLBACK succeeds", async () => {
+            const { handler, state } = loadApp({ failOn: "INSERT" });
+            const res = fakeRes();
+
+            await handler({ body: uplink() }, res);
+
+            assert.strictEqual(res.statusCode, 500);
+            assert.ok(state.queries.includes("ROLLBACK"));
+            assert.ok(!state.releaseArgs[0], "a cleanly rolled back client is reusable");
+        });
     });
 });

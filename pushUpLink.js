@@ -83,6 +83,10 @@ functions.http('helloHttp', async (req, res) => {
         return res.status(400).send('ModuleID is required');
     }
 
+    // Set when the transaction could not be rolled back, so the client is
+    // discarded instead of returned to the pool.
+    let discardClient = false;
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -119,11 +123,23 @@ functions.http('helloHttp', async (req, res) => {
         await client.query('COMMIT');
         res.status(200).send('Data inserted successfully');
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(err);
+        // Log before rolling back. If the ROLLBACK also fails this is the only
+        // place the original error is recorded.
+        console.error('Uplink insert failed', err);
+
+        try {
+            await client.query('ROLLBACK');
+        } catch (rollbackErr) {
+            discardClient = true;
+            console.error('ROLLBACK failed; discarding the connection', rollbackErr);
+        }
+
         res.status(500).send('Database error');
     } finally {
-        client.release();
+        // A client whose ROLLBACK did not go through may still hold an open
+        // transaction. A truthy argument removes it from the pool rather than
+        // returning it, so a later request cannot inherit that state.
+        client.release(discardClient);
     }
 });
 

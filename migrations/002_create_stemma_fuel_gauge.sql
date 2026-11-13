@@ -14,12 +14,29 @@
 -- Shaped like the other per-sensor tables: a ModuleID foreign key, the
 -- readings, and the uplink timestamp.
 --
+-- ModuleID is text, not the numeric that syncDB.js declares. The live
+-- Modules.ModuleID is text, and a foreign key has to match the referenced
+-- column exactly:
+--
+--   ERROR: foreign key constraint "stemma_fuel_gauge_moduleid_fkey" cannot
+--          be implemented
+--   Detail: Key columns "moduleid" and "moduleid" are of incompatible
+--           types: numeric and text.
+--
+-- text is also what the application actually sends. pushUpLink.js derives
+-- ModuleID from req.body.ID.split(':')[1], which is a string; the existing
+-- numeric columns have been relying on Postgres casting it on every insert.
+--
+-- syncDB.js has drifted from the live schema and should not be trusted as a
+-- reference — it also predates bme_280, scd_41, blues_notecard and
+-- modulesensors.
+--
 -- Safe to re-run.
 
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS stemma_fuel_gauge (
-    ModuleID numeric references Modules(ModuleID),
+    ModuleID text references Modules(ModuleID),
     fuel_gauge_temp decimal,
     fuel_gauge_voltage decimal,
     fuel_gauge_percent decimal,

@@ -97,7 +97,25 @@ functions.http('helloHttp', async (req, res) => {
         bmePressure = null,
         scd_temp = null,
         scd_humid = null,
-        scd_co2 = null
+        scd_co2 = null,
+
+        // Fields the uplink payload carries that were not being read. They are
+        // captured here so the data is no longer silently dropped at the door;
+        // none of them is written to a table yet.
+
+        // Fuel gauge / battery telemetry.
+        fuelgage_temp = null,
+        fuelgage_voltage = null,
+        fuelgage_percent = null,
+
+        // The payload sends lowercase `voltage`. `Voltage` above is a
+        // different key that this payload never sets, so insertBlues has been
+        // binding undefined -> null for it.
+        voltage = null,
+
+        // Blues routing times, in case they are wanted for latency tracking.
+        inboundTime = null,
+        outboundTime = null
     } = req.body;
 
     // Use the provided unix timestamp (seconds) when it is usable,

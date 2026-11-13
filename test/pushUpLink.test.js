@@ -244,14 +244,14 @@ describe('pushUpLink connection handling', () => {
             state.rawQueries.findIndex((q) =>
                 new RegExp("INSERT INTO " + table + "\\b", "i").test(q));
 
-        it("writes a fuel gauge reading to its own table", async () => {
+        it("writes a fuel gauge reading to stemma_fuel_gauge", async () => {
             const { handler, state } = loadApp();
             await handler({ body: uplink({
                 fuelgage_temp: 24.5, fuelgage_voltage: 3.92, fuelgage_percent: 87,
             }) }, fakeRes());
 
-            const i = find(state, "fuelgage");
-            assert.notStrictEqual(i, -1, "fuelgage row should be written");
+            const i = find(state, "stemma_fuel_gauge");
+            assert.notStrictEqual(i, -1, "stemma_fuel_gauge row should be written");
             assert.deepStrictEqual(state.params[i],
                 ["864622040846236", 24.5, 3.92, 87, UPLINK_TS]);
         });
@@ -260,7 +260,7 @@ describe('pushUpLink connection handling', () => {
             const { handler, state } = loadApp();
             await handler({ body: uplink({ fuelgage_percent: 87 }) }, fakeRes());
 
-            const i = find(state, "fuelgage");
+            const i = find(state, "stemma_fuel_gauge");
             assert.notStrictEqual(i, -1, "a partial reading is still a reading");
             assert.deepStrictEqual(state.params[i],
                 ["864622040846236", null, null, 87, UPLINK_TS]);
@@ -270,7 +270,7 @@ describe('pushUpLink connection handling', () => {
             const { handler, state } = loadApp();
             await handler({ body: uplink() }, fakeRes());
 
-            assert.strictEqual(find(state, "fuelgage"), -1);
+            assert.strictEqual(find(state, "stemma_fuel_gauge"), -1);
         });
 
         it("reaches Blues_Notecard on voltage alone", async () => {

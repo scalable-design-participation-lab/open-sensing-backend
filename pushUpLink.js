@@ -103,7 +103,9 @@ functions.http('helloHttp', async (req, res) => {
         // captured here so the data is no longer silently dropped at the door;
         // none of them is written to a table yet.
 
-        // Fuel gauge / battery telemetry.
+        // Fuel gauge / battery telemetry. The payload's "fuelgage" spelling is
+        // kept here because that is the key the firmware sends; the columns it
+        // maps to are spelled "fuel_gauge".
         fuelgage_temp = null,
         fuelgage_voltage = null,
         fuelgage_percent = null,
@@ -286,12 +288,18 @@ const updateModuleLocation = async (client, moduleId, lat, lon, ts) => {
     );
 };
 
-const INSERT_FUELGAGE =
-    'INSERT INTO fuelgage(ModuleID, fuelgage_temp, fuelgage_voltage, fuelgage_percent, timestamp) '
+const INSERT_FUEL_GAUGE =
+    'INSERT INTO stemma_fuel_gauge'
+    + '(ModuleID, fuel_gauge_temp, fuel_gauge_voltage, fuel_gauge_percent, timestamp) '
     + 'VALUES ($1, $2, $3, $4, $5)';
 
 // Write a fuel gauge reading, when this uplink carried one. The table is
-// created by migrations/002_create_fuelgage.sql.
+// created by migrations/002_create_stemma_fuel_gauge.sql.
+//
+// The payload spells it "fuelgage"; the columns spell it "fuel_gauge". The
+// firmware's typo is fixed in the wire format and not worth breaking devices
+// over, but it stops at this boundary rather than being written into every
+// query anyone runs against the table. That is what this mapping is for.
 //
 // The three readings are independent — a gauge can report state of charge
 // without temperature — so the row goes in whenever any of them is present,
@@ -302,7 +310,7 @@ const insertFuelGaugeReading = async (client, moduleId, reading, ts) => {
     if (temp === null && voltage === null && percent === null) {
         return;
     }
-    await client.query(INSERT_FUELGAGE, [moduleId, temp, voltage, percent, ts]);
+    await client.query(INSERT_FUEL_GAUGE, [moduleId, temp, voltage, percent, ts]);
 };
 
 // Exported for tests; the deployed function is reached through the registration

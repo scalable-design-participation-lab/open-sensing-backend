@@ -9,7 +9,7 @@
     "url": ""
   },
   "engines": {
-    "node": ">=12.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node pool.js",
@@ -17,19 +17,19 @@
     "test": "c8 mocha test/*.test.js --timeout=60000 --exit"
   },
   "dependencies": {
-    "@google-cloud/cloud-sql-connector": "^0.5.0",
-    "@google-cloud/functions-framework": "^3.0.0",
-    "@google-cloud/logging-winston": "^5.0.0",
-    "@google-cloud/secret-manager": "^4.0.0",
-    "express": "^4.16.2",
-    "knex": "^2.0.0",
-    "pg": "^8.11.1",
-    "pug": "^3.0.0",
-    "winston": "^3.1.0"
+    "@google-cloud/cloud-sql-connector": "~1.10.0",
+    "@google-cloud/functions-framework": "^5.0.5",
+    "@google-cloud/logging-winston": "~6.0.2",
+    "@google-cloud/secret-manager": "~6.3.0",
+    "express": "^4.22.3",
+    "knex": "^3.3.0",
+    "pg": "^8.23.1",
+    "pug": "^3.0.4",
+    "winston": "^3.19.0"
   },
   "devDependencies": {
-    "c8": "^8.0.0",
-    "mocha": "^10.0.0",
-    "supertest": "^6.0.0"
+    "c8": "^11.0.0",
+    "mocha": "^11.8.0",
+    "supertest": "^7.3.2"
   }
 }
